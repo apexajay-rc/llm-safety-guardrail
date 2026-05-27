@@ -3,13 +3,16 @@ CrisisGuard End-to-End Pipeline
 
 Combines:
 - Crisis classification
-- Safety routing
-- Intervention handling
+- Uncertainty-aware routing
+- Controlled LLM generation
+- Deterministic intervention
+- Human escalation pathways
 
 Author: CrisisGuard Research Team
 """
 
 import logging
+from typing import Dict, Any
 
 from models.roberta_classifier import (
     CrisisClassifier
@@ -22,6 +25,10 @@ from core.safety_router import (
 
 from core.intervention import (
     InterventionEngine
+)
+
+from integrations.groq_llm import (
+    GroqLLM
 )
 
 
@@ -43,14 +50,22 @@ logger = logging.getLogger(__name__)
 
 class CrisisGuardPipeline:
     """
-    End-to-end crisis-aware AI safety pipeline.
+    End-to-end crisis-aware conversational
+    safety pipeline.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        groq_api_key: str
+    ) -> None:
 
         logger.info(
-            "Initializing CrisisGuard pipeline..."
+            "Initializing CrisisGuard Pipeline..."
         )
+
+        # -------------------------------------------
+        # Core Components
+        # -------------------------------------------
 
         self.classifier = CrisisClassifier()
 
@@ -58,6 +73,10 @@ class CrisisGuardPipeline:
 
         self.intervention_engine = (
             InterventionEngine()
+        )
+
+        self.llm = GroqLLM(
+            api_key=groq_api_key
         )
 
         logger.info(
@@ -69,42 +88,49 @@ class CrisisGuardPipeline:
     def process(
         self,
         text: str
-    ) -> dict:
+    ) -> Dict[str, Any]:
         """
-        Process user input through full pipeline.
+        Process user input through
+        the full CrisisGuard pipeline.
 
         Args:
             text:
                 User utterance.
 
         Returns:
-            Structured pipeline response.
+            Structured response dictionary.
         """
 
         logger.info(
             f"Processing input: {text}"
         )
 
-        # -----------------------------------------------
-        # Step 1: Crisis Classification
-        # -----------------------------------------------
+        # -------------------------------------------
+        # Step 1: Classification
+        # -------------------------------------------
 
-        prediction = self.classifier.predict(text)
+        prediction = self.classifier.predict(
+            text
+        )
 
-        # -----------------------------------------------
-        # Step 2: Safety Routing
-        # -----------------------------------------------
+        # -------------------------------------------
+        # Step 2: Routing Decision
+        # -------------------------------------------
 
         decision = self.router.route(
             severity=prediction.severity,
             confidence=prediction.confidence
         )
 
-        # -----------------------------------------------
-        # Step 3: Response Generation
-        # -----------------------------------------------
+        # -------------------------------------------
+        # Step 3A: Intervention Mode
+        # -------------------------------------------
 
         if decision.route == Route.INTERVENTION:
+
+            logger.warning(
+                "Intervention route triggered."
+            )
 
             intervention = (
                 self.intervention_engine.generate(
@@ -116,88 +142,146 @@ class CrisisGuardPipeline:
 
                 "input": text,
 
-                "severity": prediction.severity,
+                "severity":
+                    prediction.severity,
 
-                "confidence": prediction.confidence,
+                "confidence":
+                    prediction.confidence,
 
-                "route": decision.route.value,
+                "probabilities":
+                    prediction.probabilities,
 
-                "reason": decision.reason,
+                "route":
+                    decision.route.value,
 
-                "response": intervention.message,
+                "reason":
+                    decision.reason,
+
+                "response":
+                    intervention.message,
 
                 "escalation":
-                    intervention.escalation_recommended
+                    intervention
+                    .escalation_recommended
             }
 
-        # -----------------------------------------------
-        # Human Escalation
-        # -----------------------------------------------
+        # -------------------------------------------
+        # Step 3B: Human Escalation
+        # -------------------------------------------
 
         if decision.route == Route.ESCALATE:
+
+            logger.warning(
+                "Human escalation triggered."
+            )
 
             return {
 
                 "input": text,
 
-                "severity": prediction.severity,
+                "severity":
+                    prediction.severity,
 
-                "confidence": prediction.confidence,
+                "confidence":
+                    prediction.confidence,
 
-                "route": decision.route.value,
+                "probabilities":
+                    prediction.probabilities,
 
-                "reason": decision.reason,
+                "route":
+                    decision.route.value,
+
+                "reason":
+                    decision.reason,
 
                 "response":
-                    "This conversation may require "
-                    "additional human review.",
+                    (
+                        "This conversation may "
+                        "require additional "
+                        "human review."
+                    ),
 
                 "escalation": True
             }
 
-        # -----------------------------------------------
-        # Constrained Generation
-        # -----------------------------------------------
+        # -------------------------------------------
+        # Step 3C: Constrained Generation
+        # -------------------------------------------
 
         if decision.route == Route.CONSTRAINED:
+
+            logger.info(
+                "Constrained generation route."
+            )
+
+            llm_response = self.llm.generate(
+
+                user_input=text,
+
+                constrained=True
+            )
 
             return {
 
                 "input": text,
 
-                "severity": prediction.severity,
+                "severity":
+                    prediction.severity,
 
-                "confidence": prediction.confidence,
+                "confidence":
+                    prediction.confidence,
 
-                "route": decision.route.value,
+                "probabilities":
+                    prediction.probabilities,
 
-                "reason": decision.reason,
+                "route":
+                    decision.route.value,
+
+                "reason":
+                    decision.reason,
 
                 "response":
-                    "Constrained supportive generation "
-                    "would occur here.",
+                    llm_response,
 
                 "escalation": False
             }
 
-        # -----------------------------------------------
-        # Normal Generation
-        # -----------------------------------------------
+        # -------------------------------------------
+        # Step 3D: Normal Generation
+        # -------------------------------------------
+
+        logger.info(
+            "Normal generation route."
+        )
+
+        llm_response = self.llm.generate(
+
+            user_input=text,
+
+            constrained=False
+        )
 
         return {
 
             "input": text,
 
-            "severity": prediction.severity,
+            "severity":
+                prediction.severity,
 
-            "confidence": prediction.confidence,
+            "confidence":
+                prediction.confidence,
 
-            "route": decision.route.value,
+            "probabilities":
+                prediction.probabilities,
 
-            "reason": decision.reason,
+            "route":
+                decision.route.value,
+
+            "reason":
+                decision.reason,
 
             "response":
-                "Normal LLM generation allowed.",
+                llm_response,
 
             "escalation": False
         }
@@ -209,13 +293,17 @@ class CrisisGuardPipeline:
 
 if __name__ == "__main__":
 
-    pipeline = CrisisGuardPipeline()
+    API_KEY = "YOUR_GROQ_API_KEY"
+
+    pipeline = CrisisGuardPipeline(
+        groq_api_key=API_KEY
+    )
 
     examples = [
 
         "I had a productive day.",
 
-        "I feel emotionally exhausted lately.",
+        "I feel emotionally exhausted.",
 
         "Nobody would care if I disappeared.",
 
@@ -228,9 +316,31 @@ if __name__ == "__main__":
 
         print("\n================================")
         print(f"INPUT : {result['input']}")
-        print(f"SEVERITY : {result['severity']}")
-        print(f"CONFIDENCE : {result['confidence']:.4f}")
-        print(f"ROUTE : {result['route']}")
-        print(f"REASON : {result['reason']}")
-        print(f"ESCALATION : {result['escalation']}")
-        print(f"RESPONSE : {result['response']}")
+
+        print(
+            f"SEVERITY : "
+            f"{result['severity']}"
+        )
+
+        print(
+            f"CONFIDENCE : "
+            f"{result['confidence']:.4f}"
+        )
+
+        print(
+            f"ROUTE : "
+            f"{result['route']}"
+        )
+
+        print(
+            f"REASON : "
+            f"{result['reason']}"
+        )
+
+        print(
+            f"ESCALATION : "
+            f"{result['escalation']}"
+        )
+
+        print("\nRESPONSE:")
+        print(result["response"])
